@@ -8,7 +8,7 @@ import $ from 'jquery'
 
 class Global {
     constructor() {
-        this.vBus = new Vue();        
+        this.v = new Vue();        
     }
 
     connectSocket() {
@@ -18,11 +18,31 @@ class Global {
     }
 
     initSocketListener() {
-        const g = this;               
+        this.socket.on(P.GoLoginPage, packet => this.routePacket(P.GoLoginPage, packet));
+        this.socket.on(P.EnterUser, packet => this.routePacket(P.EnterUser, packet));
+        this.socket.on(P.Disconnect, () => { window.location.href = '/login/' });
+    }
+
+    on( protocol, cb ) {
+        this.v.$bus.$on(protocol, cb);
+    }
+
+    hget( addr, cb ) {
+        this.v.$http.get(addr).then(res => cb(res.data))
+        .catch(err => console.log(err));
+    }
+
+    hpost( addr, item, cb ) {        
+        this.v.$http.post(addr, item).then(res => cb(res.data))
+        .catch(err => console.log(err));
     }
     
     sendPacket( protocol, packetData ) {
         this.socket.emit(protocol, packetData);
+    }
+
+    routePacket( protocol, packet ) {
+        this.v.$bus.$emit(protocol, packet);
     }
 
     isMobile() {

@@ -9,6 +9,9 @@ const Promise = require('promise');
 const P = require('../../common/protocol');
 const DBHelper = require('./DBHelper');
 const routes = require('../router/index.js');
+const routesAuth = require('../router/Auth.js');
+const BJLobby = require('./BlackjackLobby');
+const User = require('./User');
 
 function normalizePort(val) {
     var port = parseInt(val, 10);
@@ -36,6 +39,7 @@ class ServerManager {
             next();
         } );
         app.use('/', routes );
+        app.use('/auth', routesAuth);
 
         this.io = socketio(this.http, {
             origins: '*:*',
@@ -47,20 +51,24 @@ class ServerManager {
         this.init();
     }
 
-    init() {       
-        const sm = this;         
-        this.updateIntervalID = setInterval( ()=>{ this.update(); }, 400);        
+    init() {
+        this.updateIntervalID = setInterval( ()=>{ this.update(); }, 400);
+        this.pm_init_variable(this)
+        .then(this.pm_init_blackjackLobby)
+        .then(parent => this.listen());
+    }
 
-        new Promise(function(resolve, reject) {            
-            resolve();
-        })
-        .then(function() {
-                return new Promise(function( resolve, reject) {
-                    resolve();                    
-                });
-            })
-        .then(function() {
-            sm.listen();
+    pm_init_variable(parent) {
+        return new Promise((res,rej)=> {
+            parent.mUsers = new Map();
+            res(parent);
+        });
+    }
+
+    pm_init_blackjackLobby(parent) {        
+        return new Promise((res,rej)=> {            
+            parent.lobby = new BJLobby(parent);            
+            res(parent);
         });
     }
 
@@ -90,9 +98,7 @@ class ServerManager {
             console.log('Server listening on *:' + port);
         });
 
-        this.io.on('connection', function(socket) {
-            
-        });        
+        this.io.on('connection',(socket)=>this.connectUser(socket)); 
     }
 
     //  #업데이트
@@ -111,40 +117,97 @@ class ServerManager {
     }
 
     broadcastPacket( protocol, data ) {
-        this.io.sockets.in('auth').emit( protocol, data );
-    }
-
-    broadcastAllPacket( protocol, data ) {
         this.io.sockets.emit( protocol, data );
     }
 
     setPreListener( socket ) {        
         const sm = this;        
-        socket.on(P.SOCK.Disconnect, function() { sm.onDisconnect(socket); });
+        socket.on(P.Disconnect, () => { this.onDisconnect(socket); });
     }
     
     onDisconnect(sock) {
-        try {            
-
+        try {
+            console.log('socket disconnected : ', sock.id);
         }catch(e) {            
         }
     }    
 
     //  유저가 접속합니다.
-    connectUser(socket) {        
+    connectUser(socket) {
+        try {
+            console.log('socket connect user');
+            this.setPreListener(socket);        
+
+            if( !this.checkLoginState(socket) ) {
+                this.disconnectUser(socket, true);
+                return;
+            }
+
+            const sessionInfo = this.getSessionInfo(socket);
+            if( !sessionInfo ) {
+                this.disconnectUser(socket, true);
+                return;
+            }
+            
+            if( this.mUsers.has(sessionInfo.id) ) {
+                this.reconnectUser(socket, sessionInfo.id);
+                return;
+            }
+
+            //  신규 접속
+            let newUser = this.createUser(socket, sessionInfo);
+            this.addUser(newUser);
+
+            this.sendPacket(socket, P.EnterUser, sessionInfo);
+            this.broadcastPacket(P.RefreshLobbyInfo);
+
+        } catch(e) {
+            console.log(e);
+        }       
     }
 
-    checkReconnect(id) {
+    getSessionInfo(socket) {
+        return socket.handshake.session.user;
     }
 
-    setReconnect(socket, id) {        
+    reconnectUser(socket, id) {        
+    }
+
+    disconnectUser(socket, forceDelete) {
+        if( forceDelete ) {
+            // 소켓 연결 끊기
+            socket.disconnect('unauthorized');
+            return;
+        }        
     }
 
     getUser( id ) {        
     }
 
     getUserBySocket( socket ) {        
-    }    
+    }
+
+    checkLoginState(socket) {
+        if( !socket.handshake.session.user ) return false;
+        
+        return true;
+    }
+
+    createUser(socket, sessionInfo) {
+        let user = new User(socket, this);
+    }
+
+    addUser(user) {
+        try {
+            if( !user ) return;
+            if( !user.id ) return;
+
+            this.mUsers.set(user.id , user);
+
+        }catch(e) {
+            console.log(e);
+        }
+    }
 }
 
 module.exports = ServerManager;
